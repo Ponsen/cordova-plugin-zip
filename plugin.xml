@@ -69,4 +69,12 @@
     </config-file>
     <framework src="libz.dylib" />
   </platform>
+
+  <platform name="windows">
+        <js-module src="src/windows/ZipProxy.js" name="ZipProxy">
+            <merges target="" />
+        </js-module>
+
+        <framework src="src/windows/Zip/Zip.csproj" custom="true" type="projectReference"/>
+  </platform>
 </plugin>
