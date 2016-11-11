@@ -5,16 +5,13 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.FileNotFoundException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 
 import android.net.Uri;
-import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaPlugin;
+
 import org.apache.cordova.CordovaResourceApi.OpenForReadResult;
-import org.apache.cordova.PluginResult;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -59,12 +56,36 @@ public class Zip extends CordovaPlugin {
             // Since Cordova 3.3.0 and release of File plugins, files are accessed via cdvfile://
             // Accept a path or a URI for the source zip.
             Uri zipUri = getUriForArg(zipFileName);
+
             Uri outputUri = getUriForArg(outputDirectory);
 
             CordovaResourceApi resourceApi = webView.getResourceApi();
 
+            // Note that this is not actually used...??
             File tempFile = resourceApi.mapUriToFile(zipUri);
-            if (tempFile == null || !tempFile.exists()) {
+
+            boolean tempFileIsAnAsset = false;
+
+            // Calvium 15/2/2015: support unzipping files from assets folder.
+            // Needed because File.exists() does not work for assets
+            if (tempFile == null) {
+                String androidAssetStem = "file:///android_asset/";
+                if (zipFileName.startsWith(androidAssetStem)) {
+                    try {
+                        cordova.getActivity().getAssets().open(zipFileName.replace(androidAssetStem, ""));
+                        tempFileIsAnAsset = true;
+                    } catch (IOException ex) {
+                        String msg = "unzipSync: assets file doesn't exist";
+                        Log.e("ZIP", msg);
+                        callbackContext.error(msg);
+                        return;
+                    }
+                }
+            }
+
+            if (tempFileIsAnAsset) {
+                Log.i("ZIP", "unzipSync: unzipping from an asset file");
+            } else if (tempFile == null || !tempFile.exists()) {
                 String errorMessage = "Zip file does not exist";
                 callbackContext.error(errorMessage);
                 Log.e(LOG_TAG, errorMessage);
@@ -118,28 +139,30 @@ public class Zip extends CordovaPlugin {
 
             while ((ze = zis.getNextEntry()) != null)
             {
+                // benvium
+                long totalRead = 0;
+
                 anyEntries = true;
                 String compressedName = ze.getName();
 
                 if (ze.isDirectory()) {
-                   File dir = new File(outputDirectory + compressedName);
-                   dir.mkdirs();
+                    File dir = new File(outputDirectory + compressedName);
+                    dir.mkdirs();
                 } else {
                     File file = new File(outputDirectory + compressedName);
                     file.getParentFile().mkdirs();
-                    if(file.exists() || file.createNewFile()){
+                    if (file.exists() || file.createNewFile()) {
                         Log.w("Zip", "extracting: " + file.getPath());
                         FileOutputStream fout = new FileOutputStream(file);
                         int count;
-                        while ((count = zis.read(buffer)) != -1)
-                        {
+                        while ((count = zis.read(buffer)) != -1) {
+                            totalRead += count;
                             fout.write(buffer, 0, count);
                         }
                         fout.close();
                     }
-
                 }
-                progress.addLoaded(ze.getCompressedSize());
+                progress.addLoaded(totalRead);
                 updateProgress(callbackContext, progress);
                 zis.closeEntry();
             }
@@ -167,6 +190,7 @@ public class Zip extends CordovaPlugin {
     }
 
     private void updateProgress(CallbackContext callbackContext, ProgressEvent progress) throws JSONException {
+        Log.d("ZIP", "updateProgress() called with: " + "callbackContext = [" + callbackContext + "], progress = [" + progress + "]");
         PluginResult pluginResult = new PluginResult(PluginResult.Status.OK, progress.toJSONObject());
         pluginResult.setKeepCallback(true);
         callbackContext.sendPluginResult(pluginResult);
@@ -190,6 +214,11 @@ public class Zip extends CordovaPlugin {
         }
         public void addLoaded(long add) {
             this.loaded += add;
+
+            // Clamp to max 100%
+            if (loaded>total) {
+                loaded = total;
+            }
         }
         public long getTotal() {
             return total;
@@ -201,6 +230,11 @@ public class Zip extends CordovaPlugin {
             return new JSONObject(
                     "{loaded:" + loaded +
                     ",total:" + total + "}");
+        }
+
+        @Override
+        public String toString() {
+            return String.format("ProgressEvent{loaded=%d, total=%d, percent=%.0f}", loaded, total, (double) loaded / (double) total * 100);
         }
     }
 }
